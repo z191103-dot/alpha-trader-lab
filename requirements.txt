@@ -1,0 +1,21 @@
+# AlphaTraderLab - Python Dependencies
+# This file lists all the packages needed to run the trading lab
+
+# Core scientific computing
+numpy>=1.24.0
+pandas>=2.0.0
+
+# Data visualization
+matplotlib>=3.7.0
+
+# Market data retrieval
+yfinance>=0.2.28
+
+# Reinforcement Learning environment API
+gymnasium>=0.29.0
+
+# RL algorithms (for future steps)
+stable-baselines3>=2.1.0
+
+# Additional utilities
+scipy>=1.10.0
