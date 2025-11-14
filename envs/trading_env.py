@@ -115,9 +115,26 @@ class TradingEnv(gym.Env):
         
         # Choose a random starting point in the data
         # We need at least window_size candles before, and some candles after
-        max_start = len(self.df) - self.window_size - 100  # Leave 100 steps for the episode
-        self.episode_start = self.np_random.integers(self.window_size, max_start)
-        self.episode_end = min(self.episode_start + 500, len(self.df) - 1)  # Max 500 steps per episode
+        min_episode_length = 50  # Minimum number of steps we want in an episode
+        available_length = len(self.df) - self.window_size
+        
+        if available_length < min_episode_length:
+            # Dataset is too small, just use what we have
+            self.episode_start = self.window_size
+            self.episode_end = len(self.df) - 1
+        else:
+            # Choose a random starting point with enough room for an episode
+            max_episode_length = 500
+            episode_length = min(max_episode_length, available_length)
+            
+            # Calculate valid range for episode start
+            max_start_index = len(self.df) - episode_length - 1
+            if max_start_index > self.window_size:
+                self.episode_start = self.np_random.integers(self.window_size, max_start_index)
+            else:
+                self.episode_start = self.window_size
+            
+            self.episode_end = min(self.episode_start + episode_length, len(self.df) - 1)
         
         # Start at the beginning of the episode
         self.current_step = self.episode_start
