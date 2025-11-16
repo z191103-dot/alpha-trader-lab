@@ -13,7 +13,9 @@ Think of it like teaching a robot to trade:
 - It decides what to do: stay FLAT, go LONG (bet on price going up), or go SHORT (bet on price going down)
 - It learns from its mistakes and successes to get better over time
 
-**This is Step 1**: We're building the basic skeleton and testing that everything works with a random agent (no learning yet).
+**Complete Steps:**
+- ✅ **Step 1**: Trading environment skeleton with random agent demo
+- ✅ **Step 2**: PPO training and evaluation with baselines
 
 ---
 
@@ -21,14 +23,22 @@ Think of it like teaching a robot to trade:
 
 ```
 alpha_trader_lab/
-├── envs/                          # Trading environment code
+├── envs/                              # Trading environment code
 │   ├── __init__.py
-│   └── trading_env.py            # Main environment (Gymnasium-style)
-├── notebooks/                     # Jupyter notebooks for experiments
-│   └── AlphaTraderLab_v0.ipynb   # Step 1: Demo with random agent
-├── data/                          # Data folder (will be populated by yfinance)
-├── requirements.txt               # Python dependencies
-└── README.md                      # This file
+│   ├── trading_env.py                # Main environment (Gymnasium-style)
+│   └── ENVIRONMENT_GUIDE.md          # Technical deep-dive
+├── utils/                             # Utility functions
+│   ├── __init__.py
+│   └── evaluation.py                 # Agent evaluation utilities
+├── notebooks/                         # Jupyter notebooks for experiments
+│   ├── AlphaTraderLab_v0.ipynb       # Step 1: Random agent demo
+│   └── AlphaTraderLab_PPO_v1.ipynb   # Step 2: PPO training & evaluation
+├── models/                            # Trained models (created during training)
+├── data/                              # Data folder (populated by yfinance)
+├── train_ppo.py                       # Python script for PPO training
+├── requirements.txt                   # Python dependencies
+├── PPO_GUIDE.md                       # Comprehensive PPO training guide
+└── README.md                          # This file
 ```
 
 ---
@@ -89,18 +99,29 @@ alpha_trader_lab/
 
 ---
 
-## 🧪 What Does the Demo Do?
+## 🧪 What Can You Do?
 
-The `AlphaTraderLab_v0.ipynb` notebook demonstrates:
-
+### Step 1: Environment & Random Agent (`AlphaTraderLab_v0.ipynb`)
 1. **Data Download**: Fetches historical Bitcoin (BTC-USD) price data using `yfinance`
 2. **Environment Creation**: Sets up the trading environment with this data
 3. **Random Agent Test**: Runs a simple agent that takes random actions
-4. **Visualization**: Shows:
-   - The price chart
-   - The equity curve (how the portfolio value changes over time)
+4. **Visualization**: Shows price charts and equity curves
 
-**Important**: The random agent will perform poorly (that's expected!). In Step 2, we'll train a smart RL agent using PPO (Proximal Policy Optimization).
+### Step 2: PPO Training & Evaluation (`AlphaTraderLab_PPO_v1.ipynb` or `train_ppo.py`)
+1. **Data Splitting**: Split data into training (70%) and testing (30%) periods
+2. **PPO Training**: Train a smart RL agent using Stable-Baselines3
+3. **Evaluation**: Compare PPO vs Random vs Buy & Hold strategies
+4. **Visualization**: Equity curves, action distributions, performance tables
+5. **Model Saving**: Save trained models for later use
+
+**Quick Start for Step 2**:
+```bash
+# Train PPO agent (100k steps, ~5 minutes)
+python train_ppo.py
+
+# Or open the notebook for detailed walkthrough
+jupyter notebook notebooks/AlphaTraderLab_PPO_v1.ipynb
+```
 
 ---
 
@@ -155,14 +176,18 @@ env = TradingEnv(
 
 ---
 
-## 📊 Next Steps (Future Releases)
+## 📊 Project Roadmap
 
-This is just **Step 1** of the AlphaTraderLab project. Here's what's coming:
+- ✅ **Step 1**: Trading environment skeleton with random agent
+- ✅ **Step 2**: PPO training and evaluation framework
+- 🔜 **Step 3**: Advanced features (technical indicators, multiple assets)
+- 🔜 **Step 4**: Comprehensive backtesting and risk metrics
+- 🔜 **Step 5**: Live paper trading (simulated real-time trading)
 
-- **Step 2**: Train a real RL agent (PPO from Stable-Baselines3)
-- **Step 3**: Add more sophisticated features (technical indicators, multiple assets)
-- **Step 4**: Backtesting framework and performance metrics
-- **Step 5**: Live paper trading (simulated real-time trading)
+### Learn More
+- **Step 2 Details**: See [PPO_GUIDE.md](PPO_GUIDE.md) for comprehensive PPO training guide
+- **Environment Details**: See [ENVIRONMENT_GUIDE.md](envs/ENVIRONMENT_GUIDE.md) for technical documentation
+- **Setup Help**: See [SETUP.md](SETUP.md) for installation troubleshooting
 
 ---
 

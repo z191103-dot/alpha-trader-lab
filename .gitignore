@@ -50,6 +50,11 @@ Thumbs.db
 *.log
 logs/
 
-# Model files (if we save trained models later)
-models/
+# Model files (trained models are not committed)
+models/*.zip
+models/*.pkl
+!models/.gitkeep
 checkpoints/
+
+# Tensorboard logs
+tensorboard_logs/
