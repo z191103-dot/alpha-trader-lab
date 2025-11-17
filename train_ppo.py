@@ -72,7 +72,7 @@ def load_and_split_data(ticker="BTC-USD", start_date="2018-01-01", train_ratio=0
     return train_df, test_df
 
 
-def make_env(df, window_size=30, initial_balance=10000.0):
+def make_env(df, window_size=30, initial_balance=10000.0, use_indicators=True):
     """
     Create a TradingEnv and wrap it for Stable-Baselines3.
     
@@ -84,6 +84,8 @@ def make_env(df, window_size=30, initial_balance=10000.0):
         Number of past candles in observation.
     initial_balance : float
         Starting portfolio value.
+    use_indicators : bool
+        Whether to include technical indicators in observations.
     
     Returns:
     --------
@@ -95,7 +97,8 @@ def make_env(df, window_size=30, initial_balance=10000.0):
             df=df,
             window_size=window_size,
             initial_balance=initial_balance,
-            transaction_cost=0.001
+            transaction_cost=0.001,
+            use_indicators=use_indicators
         )
     
     return DummyVecEnv([_init])
@@ -148,7 +151,7 @@ def train_ppo_agent(train_env, total_timesteps=100_000, save_path="models/ppo_bt
     return model
 
 
-def evaluate_all_agents(test_df, model_path="models/ppo_btc.zip", window_size=30):
+def evaluate_all_agents(test_df, model_path="models/ppo_btc.zip", window_size=30, use_indicators=True):
     """
     Evaluate PPO, Random, and Buy & Hold agents on test data.
     
@@ -160,6 +163,8 @@ def evaluate_all_agents(test_df, model_path="models/ppo_btc.zip", window_size=30
         Path to trained PPO model.
     window_size : int
         Window size for environment.
+    use_indicators : bool
+        Whether to use technical indicators.
     
     Returns:
     --------
@@ -180,7 +185,8 @@ def evaluate_all_agents(test_df, model_path="models/ppo_btc.zip", window_size=30
         df=test_df,
         window_size=window_size,
         initial_balance=10000.0,
-        transaction_cost=0.001
+        transaction_cost=0.001,
+        use_indicators=use_indicators
     )
     
     # Evaluate PPO agent
@@ -188,6 +194,8 @@ def evaluate_all_agents(test_df, model_path="models/ppo_btc.zip", window_size=30
     ppo_results = evaluate_agent(test_env, model=model, n_episodes=1, deterministic=True)
     print(f"   Final equity: ${ppo_results['final_equity']:,.2f}")
     print(f"   Total return: {ppo_results['total_return']:.2f}%")
+    print(f"   Max drawdown: {ppo_results['max_drawdown']:.2f}%")
+    print(f"   Sharpe ratio: {ppo_results['sharpe_ratio']:.2f}")
     
     # Evaluate Random agent
     test_env.reset()
@@ -195,6 +203,8 @@ def evaluate_all_agents(test_df, model_path="models/ppo_btc.zip", window_size=30
     random_results = evaluate_random_agent(test_env, n_episodes=1)
     print(f"   Final equity: ${random_results['final_equity']:,.2f}")
     print(f"   Total return: {random_results['total_return']:.2f}%")
+    print(f"   Max drawdown: {random_results['max_drawdown']:.2f}%")
+    print(f"   Sharpe ratio: {random_results['sharpe_ratio']:.2f}")
     
     # Evaluate Buy & Hold
     test_env.reset()
@@ -202,6 +212,8 @@ def evaluate_all_agents(test_df, model_path="models/ppo_btc.zip", window_size=30
     bh_results = evaluate_buy_and_hold(test_env, n_episodes=1)
     print(f"   Final equity: ${bh_results['final_equity']:,.2f}")
     print(f"   Total return: {bh_results['total_return']:.2f}%")
+    print(f"   Max drawdown: {bh_results['max_drawdown']:.2f}%")
+    print(f"   Sharpe ratio: {bh_results['sharpe_ratio']:.2f}")
     
     return {
         'PPO': ppo_results,
@@ -221,8 +233,15 @@ def main():
                         help='Ticker symbol (default: BTC-USD)')
     parser.add_argument('--window-size', type=int, default=30,
                         help='Observation window size (default: 30)')
+    parser.add_argument('--use-indicators', action='store_true', default=True,
+                        help='Use technical indicators (default: True)')
+    parser.add_argument('--no-indicators', action='store_true',
+                        help='Disable technical indicators')
     
     args = parser.parse_args()
+    
+    # Handle indicator flag
+    use_indicators = args.use_indicators and not args.no_indicators
     
     print("=" * 60)
     print("🚀 AlphaTraderLab - PPO Training Pipeline")
@@ -237,10 +256,14 @@ def main():
     
     model_path = f"models/ppo_{args.ticker.replace('-', '_').lower()}.zip"
     
+    print(f"\n🔧 Configuration:")
+    print(f"   Use indicators: {use_indicators}")
+    print(f"   Window size: {args.window_size}")
+    
     # Training phase
     if not args.test:
         # Create training environment
-        train_env = make_env(train_df, window_size=args.window_size)
+        train_env = make_env(train_df, window_size=args.window_size, use_indicators=use_indicators)
         
         # Train PPO agent
         model = train_ppo_agent(
@@ -259,7 +282,8 @@ def main():
     results = evaluate_all_agents(
         test_df=test_df,
         model_path=model_path,
-        window_size=args.window_size
+        window_size=args.window_size,
+        use_indicators=use_indicators
     )
     
     # Print comparison table

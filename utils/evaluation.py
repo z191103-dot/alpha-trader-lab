@@ -12,6 +12,142 @@ import pandas as pd
 from typing import Optional, Dict, Any
 
 
+def _calculate_risk_metrics(history_df: pd.DataFrame) -> Dict[str, float]:
+    """
+    Calculate risk metrics from equity history.
+    
+    Parameters:
+    -----------
+    history_df : pandas.DataFrame
+        DataFrame with 'equity' and 'reward' columns.
+    
+    Returns:
+    --------
+    metrics : dict
+        Dictionary containing:
+        - max_drawdown: Maximum peak-to-trough decline (%)
+        - volatility: Standard deviation of returns
+        - sharpe_ratio: Risk-adjusted return metric
+    """
+    equity = history_df['equity'].values
+    
+    # 1. Maximum Drawdown (%)
+    # Find the running maximum (peak)
+    running_max = np.maximum.accumulate(equity)
+    # Calculate drawdown at each point
+    drawdown = (equity - running_max) / running_max * 100
+    max_drawdown = np.min(drawdown)  # Most negative value
+    
+    # 2. Volatility (std of returns)
+    # Calculate simple returns (percentage change)
+    returns = np.diff(equity) / equity[:-1]
+    volatility = np.std(returns) if len(returns) > 1 else 0.0
+    
+    # 3. Sharpe Ratio
+    # Annualized Sharpe = (mean_return / std_return) * sqrt(periods_per_year)
+    # Assuming daily data, periods_per_year = 252
+    if len(returns) > 1 and volatility > 0:
+        mean_return = np.mean(returns)
+        sharpe_ratio = (mean_return / volatility) * np.sqrt(252)
+    else:
+        sharpe_ratio = 0.0
+    
+    return {
+        'max_drawdown': max_drawdown,
+        'volatility': volatility,
+        'sharpe_ratio': sharpe_ratio
+    }
+
+
+def _calculate_trade_stats(history_df: pd.DataFrame) -> Dict[str, float]:
+    """
+    Calculate trade-level statistics.
+    
+    A trade is defined as a period from entering a position (0 -> 1/2)
+    to exiting it (back to 0, or switching to opposite position).
+    
+    Parameters:
+    -----------
+    history_df : pandas.DataFrame
+        DataFrame with 'position' and 'equity' columns.
+    
+    Returns:
+    --------
+    stats : dict
+        Dictionary containing:
+        - win_rate: Percentage of profitable trades
+        - avg_win: Average return of winning trades (%)
+        - avg_loss: Average return of losing trades (%)
+        - profit_factor: Ratio of total wins to total losses
+    """
+    positions = history_df['position'].values
+    equity = history_df['equity'].values
+    
+    # Detect trade boundaries
+    # A trade starts when position changes from 0 to non-zero
+    # A trade ends when position goes back to 0 or changes to different non-zero
+    
+    trades = []
+    entry_equity = None
+    in_trade = False
+    
+    for i in range(len(positions)):
+        current_pos = positions[i]
+        
+        if not in_trade and current_pos != 0:
+            # Entering a trade
+            entry_equity = equity[i]
+            in_trade = True
+        elif in_trade and (current_pos == 0 or (i > 0 and positions[i] != positions[i-1])):
+            # Exiting a trade (flat or position change)
+            exit_equity = equity[i-1] if i > 0 else equity[i]
+            if entry_equity is not None and entry_equity > 0:
+                trade_return = ((exit_equity - entry_equity) / entry_equity) * 100
+                trades.append(trade_return)
+            
+            # If switching positions, start new trade
+            if current_pos != 0:
+                entry_equity = equity[i]
+            else:
+                in_trade = False
+                entry_equity = None
+    
+    # Close any open trade at the end
+    if in_trade and entry_equity is not None:
+        exit_equity = equity[-1]
+        if entry_equity > 0:
+            trade_return = ((exit_equity - entry_equity) / entry_equity) * 100
+            trades.append(trade_return)
+    
+    # Calculate statistics
+    if len(trades) == 0:
+        return {
+            'win_rate': 0.0,
+            'avg_win': 0.0,
+            'avg_loss': 0.0,
+            'profit_factor': 0.0
+        }
+    
+    winning_trades = [t for t in trades if t > 0]
+    losing_trades = [t for t in trades if t < 0]
+    
+    win_rate = (len(winning_trades) / len(trades)) * 100 if trades else 0.0
+    avg_win = np.mean(winning_trades) if winning_trades else 0.0
+    avg_loss = np.mean(losing_trades) if losing_trades else 0.0
+    
+    # Profit factor: total gains / total losses
+    total_gains = sum(winning_trades) if winning_trades else 0.0
+    total_losses = abs(sum(losing_trades)) if losing_trades else 0.0
+    profit_factor = total_gains / total_losses if total_losses > 0 else 0.0
+    
+    return {
+        'win_rate': win_rate,
+        'avg_win': avg_win,
+        'avg_loss': avg_loss,
+        'profit_factor': profit_factor
+    }
+
+
 def evaluate_agent(env, model=None, n_episodes=1, deterministic=True, agent_type="trained"):
     """
     Evaluate an agent on the given environment.
@@ -114,13 +250,21 @@ def evaluate_agent(env, model=None, n_episodes=1, deterministic=True, agent_type
     # Count position changes (trades)
     n_trades = (df['position'].diff() != 0).sum()
     
+    # Calculate risk metrics
+    risk_metrics = _calculate_risk_metrics(df)
+    
+    # Calculate trade-level statistics
+    trade_stats = _calculate_trade_stats(df)
+    
     return {
         'history': df,
         'final_equity': final_equity,
         'total_return': total_return,
         'total_reward': total_reward,
         'n_trades': n_trades,
-        'initial_equity': initial_equity
+        'initial_equity': initial_equity,
+        **risk_metrics,
+        **trade_stats
     }
 
 
@@ -188,21 +332,25 @@ def compare_agents(results_dict: Dict[str, Dict[str, Any]]) -> pd.DataFrame:
     for agent_name, results in results_dict.items():
         comparison_data.append({
             'Agent': agent_name,
-            'Initial Equity': f"${results.get('initial_equity', 0):,.2f}",
             'Final Equity': f"${results['final_equity']:,.2f}",
             'Total Return (%)': f"{results['total_return']:.2f}%",
-            'Total Reward': f"{results['total_reward']:.4f}",
-            'Number of Trades': results['n_trades']
+            'Max Drawdown (%)': f"{results.get('max_drawdown', 0):.2f}%",
+            'Sharpe Ratio': f"{results.get('sharpe_ratio', 0):.2f}",
+            'Volatility': f"{results.get('volatility', 0):.4f}",
+            'Win Rate (%)': f"{results.get('win_rate', 0):.1f}%",
+            'Avg Win (%)': f"{results.get('avg_win', 0):.2f}%",
+            'Avg Loss (%)': f"{results.get('avg_loss', 0):.2f}%",
+            'Trades': results['n_trades']
         })
     
     df = pd.DataFrame(comparison_data)
     
-    # Sort by final equity (descending)
+    # Sort by total return (descending)
     if len(df) > 0:
         # Extract numeric values for sorting
-        df['_final_equity_numeric'] = df['Final Equity'].str.replace('$', '').str.replace(',', '').astype(float)
-        df = df.sort_values('_final_equity_numeric', ascending=False)
-        df = df.drop('_final_equity_numeric', axis=1)
+        df['_return_numeric'] = df['Total Return (%)'].str.replace('%', '').astype(float)
+        df = df.sort_values('_return_numeric', ascending=False)
+        df = df.drop('_return_numeric', axis=1)
     
     return df
 

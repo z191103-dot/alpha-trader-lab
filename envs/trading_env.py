@@ -39,12 +39,17 @@ class TradingEnv(gym.Env):
     transaction_cost : float, default=0.001
         Trading fee as a fraction (0.001 = 0.1% per trade).
         Applied when changing position (e.g., FLAT → LONG).
+    
+    use_indicators : bool, default=True
+        Whether to include technical indicators in the observation.
+        If True, adds: SMA_20, SMA_50, EMA_20, RSI_14, log_return, volatility_20.
+        If False, uses only OHLCV (backward compatible with Step 1).
     """
     
     # Define metadata for the environment (required by Gymnasium)
     metadata = {'render_modes': ['human']}
     
-    def __init__(self, df, window_size=30, initial_balance=10000.0, transaction_cost=0.001):
+    def __init__(self, df, window_size=30, initial_balance=10000.0, transaction_cost=0.001, use_indicators=True):
         super(TradingEnv, self).__init__()
         
         # Store the market data
@@ -52,6 +57,7 @@ class TradingEnv(gym.Env):
         self.window_size = window_size
         self.initial_balance = initial_balance
         self.transaction_cost = transaction_cost
+        self.use_indicators = use_indicators
         
         # Validate that we have enough data
         assert len(self.df) > window_size, \
@@ -73,16 +79,39 @@ class TradingEnv(gym.Env):
         else:
             self.normalized_volumes = np.zeros_like(self.volumes)
         
+        # Compute technical indicators if enabled
+        if self.use_indicators:
+            self._compute_indicators()
+        else:
+            self.indicators = None
+            self.min_start_index = self.window_size
+        
         # Define action space: 0 = FLAT, 1 = LONG, 2 = SHORT
         self.action_space = spaces.Discrete(3)
         
         # Define observation space:
         # The agent sees:
-        #   - window_size candles, each with 5 features (OHLCV normalized)
+        #   - window_size candles, each with K features:
+        #     * Without indicators (use_indicators=False): 5 features (OHLCV)
+        #     * With indicators (use_indicators=True): 11 features (OHLCV + 6 indicators)
         #   - current position (0=FLAT, 1=LONG, 2=SHORT)
         #   - current equity / initial_balance (portfolio performance)
-        # Total shape: (window_size, 5) + 2 scalars = (window_size * 5 + 2,)
-        obs_shape = (window_size * 5 + 2,)
+        #
+        # Feature order per candle (when use_indicators=True):
+        #   [0] Open (normalized)
+        #   [1] High (normalized)
+        #   [2] Low (normalized)
+        #   [3] Close (normalized)
+        #   [4] Volume (normalized)
+        #   [5] SMA_20 (normalized)
+        #   [6] SMA_50 (normalized)
+        #   [7] EMA_20 (normalized)
+        #   [8] RSI_14 (scaled 0-1)
+        #   [9] Log Return (standardized)
+        #   [10] Volatility_20 (standardized)
+        
+        features_per_candle = 11 if self.use_indicators else 5
+        obs_shape = (window_size * features_per_candle + 2,)
         self.observation_space = spaces.Box(
             low=-np.inf, 
             high=np.inf, 
@@ -98,6 +127,119 @@ class TradingEnv(gym.Env):
         self.equity = None            # Total portfolio value (balance + unrealized P&L)
         self.episode_start = None
         self.episode_end = None
+    
+    def _compute_indicators(self):
+        """
+        Compute technical indicators and add them to the environment.
+        
+        Indicators computed:
+        - SMA_20, SMA_50: Simple Moving Averages
+        - EMA_20: Exponential Moving Average
+        - RSI_14: Relative Strength Index (14-period)
+        - log_return: Daily log returns
+        - volatility_20: 20-day rolling volatility of log returns
+        
+        All indicators are normalized/scaled to be neural network friendly.
+        """
+        # Extract close prices as 1D array
+        if isinstance(self.df['Close'], pd.Series):
+            close_prices = self.df['Close'].values.flatten()
+        else:
+            close_prices = np.array(self.df['Close']).flatten()
+        
+        # 1. Simple Moving Averages (SMA)
+        sma_20 = pd.Series(close_prices).rolling(window=20, min_periods=20).mean().values
+        sma_50 = pd.Series(close_prices).rolling(window=50, min_periods=50).mean().values
+        
+        # 2. Exponential Moving Average (EMA)
+        ema_20 = pd.Series(close_prices).ewm(span=20, min_periods=20, adjust=False).mean().values
+        
+        # 3. RSI (Relative Strength Index)
+        rsi_14 = self._compute_rsi(close_prices, period=14)
+        
+        # 4. Log Returns
+        log_returns = np.log(close_prices[1:] / close_prices[:-1])
+        log_returns = np.concatenate([[0], log_returns])  # Prepend 0 for first value
+        
+        # 5. Volatility (rolling std of log returns)
+        volatility_20 = pd.Series(log_returns).rolling(window=20, min_periods=20).std().values
+        
+        # Normalize indicators
+        # Moving averages: divide by first close (same as prices)
+        first_close = close_prices[0]
+        sma_20_norm = sma_20 / first_close
+        sma_50_norm = sma_50 / first_close
+        ema_20_norm = ema_20 / first_close
+        
+        # RSI: already in 0-100 range, scale to 0-1
+        rsi_scaled = rsi_14 / 100.0
+        
+        # Log returns: standardize (mean=0, std=1)
+        log_returns_mean = np.nanmean(log_returns)
+        log_returns_std = np.nanstd(log_returns)
+        if log_returns_std > 0:
+            log_returns_norm = (log_returns - log_returns_mean) / log_returns_std
+        else:
+            log_returns_norm = log_returns - log_returns_mean
+        
+        # Volatility: standardize
+        volatility_mean = np.nanmean(volatility_20)
+        volatility_std = np.nanstd(volatility_20)
+        if volatility_std > 0:
+            volatility_norm = (volatility_20 - volatility_mean) / volatility_std
+        else:
+            volatility_norm = volatility_20 - volatility_mean
+        
+        # Store normalized indicators
+        self.indicators = {
+            'sma_20': sma_20_norm,
+            'sma_50': sma_50_norm,
+            'ema_20': ema_20_norm,
+            'rsi_14': rsi_scaled,
+            'log_return': log_returns_norm,
+            'volatility_20': volatility_norm
+        }
+        
+        # Determine minimum valid starting index
+        # We need all indicators to be non-NaN from this point forward
+        # SMA_50 has the longest warmup period (50 candles)
+        self.min_start_index = max(50, self.window_size)
+    
+    def _compute_rsi(self, prices, period=14):
+        """
+        Compute Relative Strength Index (RSI).
+        
+        Parameters:
+        -----------
+        prices : np.ndarray
+            Price series (typically close prices).
+        period : int
+            RSI period (typically 14).
+        
+        Returns:
+        --------
+        rsi : np.ndarray
+            RSI values (0-100 range, NaN for warmup period).
+        """
+        # Calculate price changes
+        deltas = np.diff(prices)
+        
+        # Separate gains and losses
+        gains = np.where(deltas > 0, deltas, 0)
+        losses = np.where(deltas < 0, -deltas, 0)
+        
+        # Calculate average gains and losses using exponential moving average
+        avg_gains = pd.Series(gains).ewm(span=period, min_periods=period, adjust=False).mean().values
+        avg_losses = pd.Series(losses).ewm(span=period, min_periods=period, adjust=False).mean().values
+        
+        # Calculate RS and RSI
+        rs = np.where(avg_losses != 0, avg_gains / avg_losses, 0)
+        rsi = 100 - (100 / (1 + rs))
+        
+        # Prepend NaN for the first value (no delta)
+        rsi = np.concatenate([[np.nan], rsi])
+        
+        return rsi
         
     def reset(self, seed=None, options=None):
         """
@@ -115,12 +257,15 @@ class TradingEnv(gym.Env):
         
         # Choose a random starting point in the data
         # We need at least window_size candles before, and some candles after
+        # If using indicators, also need to skip the warmup period
+        min_start = self.min_start_index if hasattr(self, 'min_start_index') else self.window_size
+        
         min_episode_length = 50  # Minimum number of steps we want in an episode
-        available_length = len(self.df) - self.window_size
+        available_length = len(self.df) - min_start
         
         if available_length < min_episode_length:
             # Dataset is too small, just use what we have
-            self.episode_start = self.window_size
+            self.episode_start = min_start
             self.episode_end = len(self.df) - 1
         else:
             # Choose a random starting point with enough room for an episode
@@ -129,10 +274,10 @@ class TradingEnv(gym.Env):
             
             # Calculate valid range for episode start
             max_start_index = len(self.df) - episode_length - 1
-            if max_start_index > self.window_size:
-                self.episode_start = self.np_random.integers(self.window_size, max_start_index)
+            if max_start_index > min_start:
+                self.episode_start = self.np_random.integers(min_start, max_start_index)
             else:
-                self.episode_start = self.window_size
+                self.episode_start = min_start
             
             self.episode_end = min(self.episode_start + episode_length, len(self.df) - 1)
         
@@ -233,7 +378,9 @@ class TradingEnv(gym.Env):
         Construct the observation for the current state.
         
         The observation includes:
-        - Last window_size candles (OHLCV, normalized)
+        - Last window_size candles with features:
+          * Without indicators: OHLCV (5 features per candle)
+          * With indicators: OHLCV + 6 indicators (11 features per candle)
         - Current position (0, 1, or 2)
         - Current equity ratio (equity / initial_balance)
         
@@ -256,8 +403,40 @@ class TradingEnv(gym.Env):
             window_volumes.reshape(-1, 1)
         ])  # Shape: (window_size, 5)
         
+        if self.use_indicators:
+            # Add technical indicators to the window
+            # Extract indicators for the window
+            window_sma20 = self.indicators['sma_20'][start_idx:end_idx].reshape(-1, 1)
+            window_sma50 = self.indicators['sma_50'][start_idx:end_idx].reshape(-1, 1)
+            window_ema20 = self.indicators['ema_20'][start_idx:end_idx].reshape(-1, 1)
+            window_rsi = self.indicators['rsi_14'][start_idx:end_idx].reshape(-1, 1)
+            window_return = self.indicators['log_return'][start_idx:end_idx].reshape(-1, 1)
+            window_vol = self.indicators['volatility_20'][start_idx:end_idx].reshape(-1, 1)
+            
+            # Replace NaN with 0 (shouldn't happen if min_start_index is set correctly, but safety check)
+            window_sma20 = np.nan_to_num(window_sma20, nan=0.0)
+            window_sma50 = np.nan_to_num(window_sma50, nan=0.0)
+            window_ema20 = np.nan_to_num(window_ema20, nan=0.0)
+            window_rsi = np.nan_to_num(window_rsi, nan=0.5)  # Default RSI to 50 (neutral)
+            window_return = np.nan_to_num(window_return, nan=0.0)
+            window_vol = np.nan_to_num(window_vol, nan=0.0)
+            
+            # Concatenate all features
+            # Order: [Open, High, Low, Close, Volume, SMA20, SMA50, EMA20, RSI14, LogReturn, Vol20]
+            window_features = np.column_stack([
+                window_ohlcv,
+                window_sma20,
+                window_sma50,
+                window_ema20,
+                window_rsi,
+                window_return,
+                window_vol
+            ])  # Shape: (window_size, 11)
+        else:
+            window_features = window_ohlcv  # Shape: (window_size, 5)
+        
         # Flatten the window
-        flat_window = window_ohlcv.flatten()  # Shape: (window_size * 5,)
+        flat_window = window_features.flatten()
         
         # Add current position and equity ratio
         position_encoded = float(self.current_position)
