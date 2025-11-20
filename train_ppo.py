@@ -72,7 +72,8 @@ def load_and_split_data(ticker="BTC-USD", start_date="2018-01-01", train_ratio=0
     return train_df, test_df
 
 
-def make_env(df, window_size=30, initial_balance=10000.0, use_indicators=True):
+def make_env(df, window_size=30, initial_balance=10000.0, use_indicators=True,
+             transaction_cost_pct=0.0, switch_penalty=0.0):
     """
     Create a TradingEnv and wrap it for Stable-Baselines3.
     
@@ -86,6 +87,10 @@ def make_env(df, window_size=30, initial_balance=10000.0, use_indicators=True):
         Starting portfolio value.
     use_indicators : bool
         Whether to include technical indicators in observations.
+    transaction_cost_pct : float
+        Transaction cost percentage per trade (Step 3.1).
+    switch_penalty : float
+        Penalty for switching position direction (Step 3.1).
     
     Returns:
     --------
@@ -97,14 +102,18 @@ def make_env(df, window_size=30, initial_balance=10000.0, use_indicators=True):
             df=df,
             window_size=window_size,
             initial_balance=initial_balance,
-            transaction_cost=0.001,
+            transaction_cost=0.001,  # Legacy parameter
+            transaction_cost_pct=transaction_cost_pct,
+            switch_penalty=switch_penalty,
             use_indicators=use_indicators
         )
     
     return DummyVecEnv([_init])
 
 
-def train_ppo_agent(train_env, total_timesteps=100_000, save_path="models/ppo_btc.zip"):
+def train_ppo_agent(train_env, total_timesteps=100_000, save_path="models/ppo_btc.zip",
+                    learning_rate=3e-4, gamma=0.99, n_steps=2048, batch_size=64,
+                    ent_coef=0.01, clip_range=0.2):
     """
     Train a PPO agent on the training environment.
     
@@ -116,6 +125,18 @@ def train_ppo_agent(train_env, total_timesteps=100_000, save_path="models/ppo_bt
         Total number of timesteps to train for.
     save_path : str
         Path to save the trained model.
+    learning_rate : float
+        Learning rate for PPO (Step 3.1).
+    gamma : float
+        Discount factor (Step 3.1).
+    n_steps : int
+        Steps per update (Step 3.1).
+    batch_size : int
+        Minibatch size (Step 3.1).
+    ent_coef : float
+        Entropy coefficient for exploration (Step 3.1).
+    clip_range : float
+        PPO clipping parameter (Step 3.1).
     
     Returns:
     --------
@@ -124,20 +145,19 @@ def train_ppo_agent(train_env, total_timesteps=100_000, save_path="models/ppo_bt
     """
     print(f"\n🤖 Training PPO agent for {total_timesteps:,} timesteps...")
     
-    # Create PPO model with reasonable hyperparameters
+    # Create PPO model with configurable hyperparameters (Step 3.1)
     model = PPO(
         policy="MlpPolicy",
         env=train_env,
-        learning_rate=3e-4,      # Standard learning rate
-        n_steps=2048,             # Steps per update
-        batch_size=64,            # Minibatch size
-        n_epochs=10,              # Epochs per update
-        gamma=0.99,               # Discount factor
-        gae_lambda=0.95,          # GAE parameter
-        clip_range=0.2,           # PPO clipping
-        ent_coef=0.01,            # Entropy coefficient (exploration)
-        verbose=1                 # Print training progress
-        # Note: tensorboard_log removed to avoid dependency issues
+        learning_rate=learning_rate,
+        n_steps=n_steps,
+        batch_size=batch_size,
+        n_epochs=10,              # Keep fixed
+        gamma=gamma,
+        gae_lambda=0.95,          # Keep fixed
+        clip_range=clip_range,
+        ent_coef=ent_coef,
+        verbose=1
     )
     
     # Train the model
@@ -151,7 +171,8 @@ def train_ppo_agent(train_env, total_timesteps=100_000, save_path="models/ppo_bt
     return model
 
 
-def evaluate_all_agents(test_df, model_path="models/ppo_btc.zip", window_size=30, use_indicators=True):
+def evaluate_all_agents(test_df, model_path="models/ppo_btc.zip", window_size=30, use_indicators=True,
+                        transaction_cost_pct=0.0, switch_penalty=0.0):
     """
     Evaluate PPO, Random, and Buy & Hold agents on test data.
     
@@ -165,6 +186,10 @@ def evaluate_all_agents(test_df, model_path="models/ppo_btc.zip", window_size=30
         Window size for environment.
     use_indicators : bool
         Whether to use technical indicators.
+    transaction_cost_pct : float
+        Transaction cost percentage (Step 3.1).
+    switch_penalty : float
+        Position switch penalty (Step 3.1).
     
     Returns:
     --------
@@ -186,6 +211,8 @@ def evaluate_all_agents(test_df, model_path="models/ppo_btc.zip", window_size=30
         window_size=window_size,
         initial_balance=10000.0,
         transaction_cost=0.001,
+        transaction_cost_pct=transaction_cost_pct,
+        switch_penalty=switch_penalty,
         use_indicators=use_indicators
     )
     
@@ -224,7 +251,9 @@ def evaluate_all_agents(test_df, model_path="models/ppo_btc.zip", window_size=30
 
 def main():
     """Main training and evaluation pipeline."""
-    parser = argparse.ArgumentParser(description='Train PPO agent on TradingEnv')
+    parser = argparse.ArgumentParser(description='Train PPO agent on TradingEnv (Step 3.1)')
+    
+    # Environment parameters
     parser.add_argument('--timesteps', type=int, default=100_000,
                         help='Total training timesteps (default: 100,000)')
     parser.add_argument('--test', action='store_true',
@@ -237,6 +266,26 @@ def main():
                         help='Use technical indicators (default: True)')
     parser.add_argument('--no-indicators', action='store_true',
                         help='Disable technical indicators')
+    
+    # Step 3.1: Trading costs
+    parser.add_argument('--transaction-cost', type=float, default=0.0,
+                        help='Transaction cost percentage per trade (default: 0.0)')
+    parser.add_argument('--switch-penalty', type=float, default=0.0,
+                        help='Penalty for switching position direction (default: 0.0)')
+    
+    # Step 3.1: PPO hyperparameters
+    parser.add_argument('--learning-rate', type=float, default=3e-4,
+                        help='PPO learning rate (default: 3e-4)')
+    parser.add_argument('--gamma', type=float, default=0.99,
+                        help='PPO discount factor (default: 0.99)')
+    parser.add_argument('--n-steps', type=int, default=2048,
+                        help='PPO steps per update (default: 2048)')
+    parser.add_argument('--batch-size', type=int, default=64,
+                        help='PPO minibatch size (default: 64)')
+    parser.add_argument('--ent-coef', type=float, default=0.01,
+                        help='PPO entropy coefficient (default: 0.01)')
+    parser.add_argument('--clip-range', type=float, default=0.2,
+                        help='PPO clipping parameter (default: 0.2)')
     
     args = parser.parse_args()
     
@@ -256,20 +305,43 @@ def main():
     
     model_path = f"models/ppo_{args.ticker.replace('-', '_').lower()}.zip"
     
+    # Print comprehensive configuration (Step 3.1)
     print(f"\n🔧 Configuration:")
-    print(f"   Use indicators: {use_indicators}")
-    print(f"   Window size: {args.window_size}")
+    print(f"   Environment:")
+    print(f"     - Use indicators: {use_indicators}")
+    print(f"     - Window size: {args.window_size}")
+    print(f"     - Transaction cost: {args.transaction_cost:.4f}")
+    print(f"     - Switch penalty: {args.switch_penalty:.4f}")
+    print(f"   PPO Hyperparameters:")
+    print(f"     - Learning rate: {args.learning_rate}")
+    print(f"     - Gamma: {args.gamma}")
+    print(f"     - N-steps: {args.n_steps}")
+    print(f"     - Batch size: {args.batch_size}")
+    print(f"     - Entropy coef: {args.ent_coef}")
+    print(f"     - Clip range: {args.clip_range}")
     
     # Training phase
     if not args.test:
         # Create training environment
-        train_env = make_env(train_df, window_size=args.window_size, use_indicators=use_indicators)
+        train_env = make_env(
+            df=train_df, 
+            window_size=args.window_size, 
+            use_indicators=use_indicators,
+            transaction_cost_pct=args.transaction_cost,
+            switch_penalty=args.switch_penalty
+        )
         
         # Train PPO agent
         model = train_ppo_agent(
             train_env=train_env,
             total_timesteps=args.timesteps,
-            save_path=model_path
+            save_path=model_path,
+            learning_rate=args.learning_rate,
+            gamma=args.gamma,
+            n_steps=args.n_steps,
+            batch_size=args.batch_size,
+            ent_coef=args.ent_coef,
+            clip_range=args.clip_range
         )
     else:
         print("\n⏭️  Skipping training (--test flag set)")
@@ -283,7 +355,9 @@ def main():
         test_df=test_df,
         model_path=model_path,
         window_size=args.window_size,
-        use_indicators=use_indicators
+        use_indicators=use_indicators,
+        transaction_cost_pct=args.transaction_cost,
+        switch_penalty=args.switch_penalty
     )
     
     # Print comparison table
