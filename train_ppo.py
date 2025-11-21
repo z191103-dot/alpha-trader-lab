@@ -249,6 +249,161 @@ def evaluate_all_agents(test_df, model_path="models/ppo_btc.zip", window_size=30
     }
 
 
+def run_experiment_for_ticker(
+    ticker,
+    timesteps=100_000,
+    window_size=30,
+    use_indicators=True,
+    transaction_cost_pct=0.0,
+    switch_penalty=0.0,
+    learning_rate=3e-4,
+    gamma=0.99,
+    n_steps=2048,
+    batch_size=64,
+    ent_coef=0.01,
+    clip_range=0.2,
+    output_dir="results",
+    skip_training=False,
+    verbose=True
+):
+    """
+    Run complete PPO training and evaluation experiment for a single ticker.
+    
+    This function is designed to be called from multi-asset runners (Step 3.2)
+    or used standalone. It handles data loading, training, evaluation, and
+    result saving with per-asset file naming.
+    
+    Parameters:
+    -----------
+    ticker : str
+        Ticker symbol (e.g., "BTC-USD", "SPY").
+    timesteps : int
+        Total training timesteps.
+    window_size : int
+        Observation window size.
+    use_indicators : bool
+        Whether to use technical indicators.
+    transaction_cost_pct : float
+        Transaction cost percentage.
+    switch_penalty : float
+        Position switch penalty.
+    learning_rate : float
+        PPO learning rate.
+    gamma : float
+        PPO discount factor.
+    n_steps : int
+        PPO steps per update.
+    batch_size : int
+        PPO minibatch size.
+    ent_coef : float
+        PPO entropy coefficient.
+    clip_range : float
+        PPO clipping parameter.
+    output_dir : str
+        Directory for saving results (default: "results").
+    skip_training : bool
+        If True, skip training and only evaluate (requires existing model).
+    verbose : bool
+        If True, print detailed progress.
+    
+    Returns:
+    --------
+    results : dict
+        Dictionary with keys 'PPO', 'Random', 'Buy & Hold', each containing
+        evaluation metrics.
+    """
+    from config.assets import normalize_ticker_to_slug
+    
+    if verbose:
+        print(f"\n{'='*60}")
+        print(f"🎯 Running experiment for {ticker}")
+        print(f"{'='*60}")
+    
+    # Load and split data
+    try:
+        train_df, test_df = load_and_split_data(
+            ticker=ticker,
+            start_date="2018-01-01",
+            train_ratio=0.7
+        )
+    except Exception as e:
+        print(f"❌ Error loading data for {ticker}: {e}")
+        return None
+    
+    # Create asset slug for file naming
+    asset_slug = normalize_ticker_to_slug(ticker)
+    model_path = f"models/ppo_{asset_slug}.zip"
+    
+    if verbose:
+        print(f"\n🔧 Configuration:")
+        print(f"   Ticker: {ticker}")
+        print(f"   Asset slug: {asset_slug}")
+        print(f"   Use indicators: {use_indicators}")
+        print(f"   Window size: {window_size}")
+        print(f"   Transaction cost: {transaction_cost_pct:.4f}")
+        print(f"   Switch penalty: {switch_penalty:.4f}")
+    
+    # Training phase
+    if not skip_training:
+        train_env = make_env(
+            df=train_df,
+            window_size=window_size,
+            use_indicators=use_indicators,
+            transaction_cost_pct=transaction_cost_pct,
+            switch_penalty=switch_penalty
+        )
+        
+        model = train_ppo_agent(
+            train_env=train_env,
+            total_timesteps=timesteps,
+            save_path=model_path,
+            learning_rate=learning_rate,
+            gamma=gamma,
+            n_steps=n_steps,
+            batch_size=batch_size,
+            ent_coef=ent_coef,
+            clip_range=clip_range
+        )
+    else:
+        if verbose:
+            print(f"\n⏭️  Skipping training (using existing model)")
+    
+    # Evaluation phase
+    if verbose:
+        print(f"\n{'='*60}")
+        print(f"📊 Evaluation Phase - {ticker}")
+        print(f"{'='*60}")
+    
+    results = evaluate_all_agents(
+        test_df=test_df,
+        model_path=model_path,
+        window_size=window_size,
+        use_indicators=use_indicators,
+        transaction_cost_pct=transaction_cost_pct,
+        switch_penalty=switch_penalty
+    )
+    
+    # Save per-asset results
+    os.makedirs(output_dir, exist_ok=True)
+    
+    # Save PPO history
+    ppo_history_path = f"{output_dir}/ppo_results_{asset_slug}.csv"
+    results['PPO']['history'].to_csv(ppo_history_path, index=False)
+    if verbose:
+        print(f"\n💾 Saved PPO history to: {ppo_history_path}")
+    
+    # Save agent comparison
+    comparison_df = compare_agents(results)
+    comparison_path = f"{output_dir}/agent_comparison_{asset_slug}.csv"
+    comparison_df.to_csv(comparison_path, index=False)
+    if verbose:
+        print(f"💾 Saved comparison to: {comparison_path}")
+        print(f"\n📊 {ticker} Results:")
+        print(comparison_df.to_string(index=False))
+    
+    return results
+
+
 def main():
     """Main training and evaluation pipeline."""
     parser = argparse.ArgumentParser(description='Train PPO agent on TradingEnv (Step 3.1)')
