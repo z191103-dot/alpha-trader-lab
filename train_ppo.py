@@ -406,7 +406,11 @@ def run_experiment_for_ticker(
 
 def main():
     """Main training and evaluation pipeline."""
-    parser = argparse.ArgumentParser(description='Train PPO agent on TradingEnv (Step 3.1)')
+    parser = argparse.ArgumentParser(description='Train PPO agent on TradingEnv (Step 3.4)')
+    
+    # Step 3.4: Config file support
+    parser.add_argument('--config', type=str, default=None,
+                        help='Path to YAML config file (overrides other args)')
     
     # Environment parameters
     parser.add_argument('--timesteps', type=int, default=100_000,
@@ -442,7 +446,42 @@ def main():
     parser.add_argument('--clip-range', type=float, default=0.2,
                         help='PPO clipping parameter (default: 0.2)')
     
+    # Step 3.4: Result versioning
+    parser.add_argument('--output-suffix', type=str, default='',
+                        help='Suffix for output files (e.g., "_v2")')
+    
     args = parser.parse_args()
+    
+    # Step 3.4: Load config file if provided
+    if args.config:
+        from config.load_config import (
+            load_yaml_config, get_asset_symbol, get_training_config,
+            get_ppo_kwargs, get_env_kwargs, print_config_summary
+        )
+        
+        config = load_yaml_config(args.config)
+        print_config_summary(config)
+        
+        # Override args with config values
+        args.ticker = get_asset_symbol(config)
+        training_config = get_training_config(config)
+        args.timesteps = training_config['total_timesteps']
+        
+        # PPO hyperparameters from config
+        ppo_config = config['ppo']
+        args.learning_rate = ppo_config['learning_rate']
+        args.gamma = ppo_config['gamma']
+        args.n_steps = ppo_config['n_steps']
+        args.batch_size = ppo_config['batch_size']
+        args.ent_coef = ppo_config['ent_coef']
+        args.clip_range = ppo_config['clip_range']
+        
+        # Environment parameters from config
+        env_config = config['env']
+        args.window_size = env_config['window_size']
+        args.use_indicators = env_config['use_indicators']
+        args.transaction_cost = env_config['transaction_cost']
+        args.switch_penalty = env_config['switch_penalty']
     
     # Handle indicator flag
     use_indicators = args.use_indicators and not args.no_indicators
@@ -458,7 +497,10 @@ def main():
         train_ratio=0.7
     )
     
-    model_path = f"models/ppo_{args.ticker.replace('-', '_').lower()}.zip"
+    # Step 3.4: Apply output suffix for versioning
+    ticker_slug = args.ticker.replace('-', '_').lower()
+    suffix = args.output_suffix if args.output_suffix else ""
+    model_path = f"models/ppo_{ticker_slug}{suffix}.zip"
     
     # Print comprehensive configuration (Step 3.1)
     print(f"\n🔧 Configuration:")
@@ -515,6 +557,14 @@ def main():
         switch_penalty=args.switch_penalty
     )
     
+    # Save results (Step 3.4: with versioning)
+    os.makedirs("results", exist_ok=True)
+    
+    # Save PPO history
+    ppo_history_path = f"results/ppo_results_{ticker_slug}{suffix}.csv"
+    results['PPO']['history'].to_csv(ppo_history_path, index=False)
+    print(f"\n💾 Saved PPO history to: {ppo_history_path}")
+    
     # Print comparison table
     print("\n" + "=" * 60)
     print("📊 Agent Comparison")
@@ -522,13 +572,19 @@ def main():
     comparison_df = compare_agents(results)
     print(comparison_df.to_string(index=False))
     
+    # Save agent comparison
+    comparison_path = f"results/agent_comparison_{ticker_slug}{suffix}.csv"
+    comparison_df.to_csv(comparison_path, index=False)
+    print(f"\n💾 Saved comparison to: {comparison_path}")
+    
     print("\n" + "=" * 60)
     print("✅ Training and evaluation complete!")
     print("=" * 60)
     print(f"\n💡 Tips:")
     print(f"   - Model saved at: {model_path}")
+    print(f"   - Results saved to: results/*{suffix}.csv")
+    print(f"   - Run with --config to use YAML config files")
     print(f"   - Run with --test to skip training and only evaluate")
-    print(f"   - Run with --timesteps 200000 for longer training")
     print(f"   - Check notebooks/AlphaTraderLab_PPO_v1.ipynb for visualizations")
 
 

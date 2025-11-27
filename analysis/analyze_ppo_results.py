@@ -301,7 +301,7 @@ def analyze_multiple_assets(
     return summary_df
 
 
-def compare_agents_from_csv(asset: str, results_dir: str = "results") -> Optional[pd.DataFrame]:
+def compare_agents_from_csv(asset: str, results_dir: str = "results", file_pattern: str = "agent_comparison_{asset}.csv") -> Optional[pd.DataFrame]:
     """
     Load agent comparison CSV if it exists.
     
@@ -311,6 +311,8 @@ def compare_agents_from_csv(asset: str, results_dir: str = "results") -> Optiona
         Asset symbol
     results_dir : str
         Directory containing result files
+    file_pattern : str
+        Filename pattern with {asset} placeholder
     
     Returns:
     --------
@@ -320,7 +322,7 @@ def compare_agents_from_csv(asset: str, results_dir: str = "results") -> Optiona
     from config.assets import normalize_ticker_to_slug
     
     asset_slug = normalize_ticker_to_slug(asset)
-    comparison_path = os.path.join(results_dir, f"agent_comparison_{asset_slug}.csv")
+    comparison_path = os.path.join(results_dir, file_pattern.format(asset=asset_slug))
     
     if not os.path.exists(comparison_path):
         return None
@@ -367,7 +369,7 @@ def print_summary_table(summary_df: pd.DataFrame):
     print("="*100 + "\n")
 
 
-def print_agent_comparisons(assets: List[str], results_dir: str = "results"):
+def print_agent_comparisons(assets: List[str], results_dir: str = "results", file_pattern: str = "agent_comparison_{asset}.csv"):
     """
     Print agent comparison tables for each asset.
     
@@ -377,13 +379,15 @@ def print_agent_comparisons(assets: List[str], results_dir: str = "results"):
         List of asset symbols
     results_dir : str
         Directory containing result files
+    file_pattern : str
+        Filename pattern with {asset} placeholder
     """
     print("\n" + "="*100)
     print("📊 AGENT COMPARISONS (PPO vs Buy & Hold vs Random)")
     print("="*100)
     
     for asset in assets:
-        comparison_df = compare_agents_from_csv(asset, results_dir)
+        comparison_df = compare_agents_from_csv(asset, results_dir, file_pattern)
         
         if comparison_df is None:
             print(f"\n⚠️  No comparison data found for {asset}")
@@ -425,6 +429,13 @@ def main():
         help='Show agent comparison tables (default: True)'
     )
     
+    parser.add_argument(
+        '--suffix',
+        type=str,
+        default='',
+        help='Suffix for result files (e.g., "_v2") (default: none)'
+    )
+    
     args = parser.parse_args()
     
     # Parse assets
@@ -438,12 +449,15 @@ def main():
     
     # Analyze PPO results for each asset
     try:
-        summary_df = analyze_multiple_assets(assets, results_dir=args.results_dir)
+        # Update file pattern with suffix
+        file_pattern = f"ppo_results_{{asset}}{args.suffix}.csv"
+        summary_df = analyze_multiple_assets(assets, results_dir=args.results_dir, file_pattern=file_pattern)
         print_summary_table(summary_df)
         
         # Print agent comparisons if available
         if args.show_comparisons:
-            print_agent_comparisons(assets, results_dir=args.results_dir)
+            comp_pattern = f"agent_comparison_{{asset}}{args.suffix}.csv"
+            print_agent_comparisons(assets, results_dir=args.results_dir, file_pattern=comp_pattern)
         
         # Print key insights
         print("\n" + "="*100)

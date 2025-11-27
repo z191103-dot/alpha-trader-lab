@@ -1,0 +1,24 @@
+# PPO Configuration for BTC-USD
+# High volatility asset - baseline configuration
+
+asset:
+  symbol: "BTC-USD"
+  
+training:
+  total_timesteps: 100000
+  seed: 42
+  
+ppo:
+  learning_rate: 0.0003  # 3e-4
+  gamma: 0.99
+  n_steps: 512
+  batch_size: 256
+  ent_coef: 0.01
+  clip_range: 0.2
+  
+env:
+  window_size: 30
+  initial_balance: 10000
+  use_indicators: true
+  transaction_cost: 0.001
+  switch_penalty: 0.0005

@@ -1,0 +1,24 @@
+# PPO Configuration for QQQ (NASDAQ-100 ETF)
+# Tech-heavy equity index - extended training and higher gamma
+
+asset:
+  symbol: "QQQ"
+  
+training:
+  total_timesteps: 200000
+  seed: 42
+  
+ppo:
+  learning_rate: 0.0003  # 3e-4
+  gamma: 0.995  # Higher gamma for longer-term rewards
+  n_steps: 1024  # Larger batch for more stable updates
+  batch_size: 256
+  ent_coef: 0.0075  # Moderate entropy - between BTC and SPY
+  clip_range: 0.2
+  
+env:
+  window_size: 30
+  initial_balance: 10000
+  use_indicators: true
+  transaction_cost: 0.001
+  switch_penalty: 0.0005
